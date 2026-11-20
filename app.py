@@ -4,15 +4,19 @@ import time
 from datetime import datetime
 
 import cv2
+import gdown
 import numpy as np
 import streamlit as st
 import tensorflow as tf
 from PIL import Image, ImageDraw
 
 # ==========================================
-# KONFIGURASI SESUAI TRAINING
+# KONFIGURASI SESUAI TRAINING & GOOGLE DRIVE
 # ==========================================
 MODEL_PATH = "best_resnet50_model.keras"
+# Ganti nilai di bawah ini dengan File ID dari link Google Drive model Anda
+GDRIVE_FILE_ID = "1iCQKTWiLEcCHtKpvRgl1UB7RJyNMRPjH"
+
 # Samakan dengan IMG_SIZE = (height, width) pada script training Anda
 IMG_SIZE = (224, 224)
 # Samakan urutan indeks 0, 1, 2 dengan CLASS_TO_IDX / IDX_TO_CLASS saat training
@@ -49,10 +53,38 @@ def pil_to_png_bytes(img_pil: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+def download_model_from_gdrive(dest_path: str, file_id: str) -> bool:
+    """Mengunduh file model dari Google Drive menggunakan gdown."""
+    clean_id = (file_id or "").strip()
+    if not clean_id or "MASUKKAN_FILE_ID" in clean_id:
+        st.error("`GDRIVE_FILE_ID` belum diisi pada kode `app.py`.")
+        return False
+
+    url = f"https://drive.google.com/uc?id={clean_id}"
+    try:
+        output = gdown.download(url, dest_path, quiet=False, fuzzy=True)
+        return (
+            output is not None
+            and os.path.exists(dest_path)
+            and os.path.getsize(dest_path) > 1024 * 1024
+        )
+    except Exception as exc:
+        st.error(f"Gagal mengunduh model dari Google Drive: {exc}")
+        return False
+
+
 @st.cache_resource
 def load_fundus_model():
-    if not os.path.exists(MODEL_PATH):
-        return None
+    need_download = (
+        not os.path.exists(MODEL_PATH)
+        or os.path.getsize(MODEL_PATH) < 1024 * 1024
+    )
+    if need_download:
+        with st.spinner("Mengunduh model dari Google Drive, mohon tunggu..."):
+            downloaded = download_model_from_gdrive(MODEL_PATH, GDRIVE_FILE_ID)
+            if not downloaded:
+                return None
+
     try:
         return tf.keras.models.load_model(MODEL_PATH, compile=False)
     except Exception as exc:
@@ -93,13 +125,11 @@ def make_gradcam_heatmap(img_array: np.ndarray, model: tf.keras.Model, pred_inde
             if last_conv is None:
                 return np.zeros((7, 7), dtype=np.float32)
 
-            # Bangun graph feature extractor hingga layer conv terakhir di backbone
             conv_extractor = tf.keras.Model(
                 inputs=backbone.input,
                 outputs=last_conv.output,
             )
 
-            # Temukan layer setelah backbone pada model utama
             post_layers = []
             found_backbone = False
             for layer in model.layers:
@@ -108,7 +138,6 @@ def make_gradcam_heatmap(img_array: np.ndarray, model: tf.keras.Model, pred_inde
                 elif layer is backbone:
                     found_backbone = True
 
-            # Cari layer sebelum backbone (misalnya data_augmentation)
             pre_layers = []
             for layer in model.layers:
                 if layer is backbone:
@@ -123,7 +152,6 @@ def make_gradcam_heatmap(img_array: np.ndarray, model: tf.keras.Model, pred_inde
                 conv_outputs = conv_extractor(x, training=False)
                 tape.watch(conv_outputs)
 
-                # Jalankan sisa backbone dari output conv_outputs jika ada layer setelahnya
                 backbone_out = conv_outputs
                 passed_conv = False
                 for sub_layer in backbone.layers:
@@ -252,7 +280,7 @@ def main_app():
         model = load_fundus_model()
         if model is None:
             st.error(
-                f"File `{MODEL_PATH}` tidak ditemukan. Letakkan file model di folder yang sama dengan `app.py`."
+                "Model belum dapat dimuat. Periksa kembali `GDRIVE_FILE_ID` serta izin akses file di Google Drive."
             )
             return
 

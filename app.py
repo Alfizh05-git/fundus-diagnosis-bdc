@@ -54,6 +54,7 @@ def pil_to_png_bytes(img_pil: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+<<<<<<< HEAD
 def download_model_from_release(dest_path: str, release_url: str) -> bool:
     """Mengunduh file model langsung dari aset GitHub Releases."""
     clean_url = (release_url or "").strip()
@@ -81,6 +82,76 @@ def download_model_from_release(dest_path: str, release_url: str) -> bool:
         st.error(
             f"Ukuran file model terlalu kecil ({size_bytes} bytes), kemungkinan file tidak terunduh penuh."
         )
+=======
+import requests
+
+def _download_gdrive_fallback_requests(dest_path: str, file_id: str) -> bool:
+    """Cadangan unduhan file besar Google Drive dengan konfirmasi token bila diperlukan."""
+    session = requests.Session()
+    base_url = "https://docs.google.com/uc?export=download"
+    params = {"id": file_id}
+
+    resp = session.get(base_url, params=params, stream=True, timeout=120)
+    token = None
+    for k, v in resp.cookies.items():
+        if k.startswith("download_warning"):
+            token = v
+            break
+    if token:
+        params["confirm"] = token
+        resp.close()
+        resp = session.get(base_url, params=params, stream=True, timeout=120)
+
+    if resp.status_code != 200:
+        st.warning(f"Unduhan Google Drive mengembalikan status HTTP {resp.status_code}.")
+        return False
+
+    with open(dest_path, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
+    resp.close()
+    return os.path.exists(dest_path)
+
+
+def download_model_from_gdrive(dest_path: str, file_id: str) -> bool:
+    """Mengunduh file model dari Google Drive menggunakan gdown lalu fallback ke requests."""
+    clean_id = (file_id or "").strip()
+    if not clean_id or "MASUKKAN_FILE_ID" in clean_id:
+        st.error("`GDRIVE_FILE_ID` belum diisi pada kode `app.py`.")
+        return False
+
+    url = f"https://drive.google.com/uc?id={clean_id}"
+    downloaded_ok = False
+
+    try:
+        output = gdown.download(url, dest_path, quiet=False, fuzzy=True)
+        downloaded_ok = output is not None and os.path.exists(dest_path)
+    except Exception as exc:
+        st.warning(f"`gdown` gagal: {exc}. Mencoba metode unduhan cadangan...")
+
+    if not downloaded_ok or (os.path.exists(dest_path) and os.path.getsize(dest_path) < 1024 * 1024):
+        try:
+            downloaded_ok = _download_gdrive_fallback_requests(dest_path, clean_id)
+        except Exception as exc:
+            st.error(f"Unduhan cadangan juga gagal: {exc}")
+            return False
+
+    if not os.path.exists(dest_path):
+        st.error("File model tidak berhasil dibuat setelah proses unduh.")
+        return False
+
+    size_bytes = os.path.getsize(dest_path)
+    if size_bytes < 1024 * 1024:
+        with open(dest_path, "rb") as f:
+            preview = f.read(300).decode("utf-8", errors="replace")
+        st.error(
+            f"File yang terunduh terlalu kecil ({size_bytes} bytes), kemungkinan bukan file model `.keras` "
+            "(misalnya halaman izin akses/konfirmasi Google Drive). Cek apakah file di Google Drive sudah diatur ke "
+            "**Anyone with the link**."
+        )
+        st.code(preview, language="text")
+>>>>>>> b04ea1eefa988d72290d73a2284814cc32ccf8cb
         return False
 
     return True

@@ -54,35 +54,91 @@ def pil_to_png_bytes(img_pil: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+import traceback
+
+
 def download_model_from_release(dest_path: str, release_url: str) -> bool:
-    """Mengunduh file model langsung dari aset GitHub Releases."""
+    """Mengunduh file model langsung dari aset GitHub Releases dengan log status & error detail."""
     clean_url = (release_url or "").strip()
     if not clean_url:
-        st.error("`MODEL_RELEASE_URL` kosong pada kode `app.py`.")
+        msg = "`MODEL_RELEASE_URL` kosong pada kode `app.py`."
+        print(f"[MODEL DOWNLOAD ERROR] {msg}", flush=True)
+        st.error(msg)
         return False
+
+    print(f"[MODEL DOWNLOAD] Mengunduh dari: {clean_url} -> {dest_path}", flush=True)
+    status_placeholder = st.empty()
+    status_placeholder.info(f"Menghubungkan ke GitHub Releases: `{clean_url}`")
 
     try:
         with requests.get(clean_url, stream=True, timeout=300) as resp:
-            resp.raise_for_status()
+            print(f"[MODEL DOWNLOAD] HTTP Status: {resp.status_code}", flush=True)
+            total_bytes = int(resp.headers.get("Content-Length", 0))
+            if total_bytes > 0:
+                print(
+                    f"[MODEL DOWNLOAD] Ukuran file di server: {total_bytes / (1024 * 1024):.2f} MB",
+                    flush=True,
+                )
+
+            if resp.status_code != 200:
+                body_preview = resp.text[:300] if resp.text else ""
+                err_msg = (
+                    f"Gagal mengunduh model (HTTP {resp.status_code}). "
+                    f"Pastikan release & aset `best_resnet50_model.keras` tersedia publik."
+                )
+                print(f"[MODEL DOWNLOAD ERROR] {err_msg} | Preview: {body_preview}", flush=True)
+                status_placeholder.error(err_msg)
+                if body_preview:
+                    st.code(body_preview, language="text")
+                return False
+
+            downloaded_bytes = 0
+            last_logged_mb = 0
             with open(dest_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=1024 * 1024):
                     if chunk:
                         f.write(chunk)
+                        downloaded_bytes += len(chunk)
+                        current_mb = downloaded_bytes // (1024 * 1024)
+                        if current_mb >= last_logged_mb + 50:
+                            last_logged_mb = current_mb
+                            print(
+                                f"[MODEL DOWNLOAD] Terunduh: {downloaded_bytes / (1024 * 1024):.1f} MB",
+                                flush=True,
+                            )
+                            status_placeholder.info(
+                                f"Mengunduh model: {downloaded_bytes / (1024 * 1024):.1f} MB..."
+                            )
+
     except Exception as exc:
-        st.error(f"Gagal mengunduh model dari GitHub Releases: {exc}")
+        tb_str = traceback.format_exc()
+        print(f"[MODEL DOWNLOAD EXCEPTION] {exc}\n{tb_str}", flush=True)
+        st.error(f"Terjadi exception saat mengunduh model: {exc}")
+        st.exception(exc)
         return False
 
     if not os.path.exists(dest_path):
-        st.error("File model tidak ditemukan setelah proses unduh.")
+        msg = f"File `{dest_path}` tidak ditemukan di direktori kerja ({os.getcwd()}) setelah unduh."
+        print(f"[MODEL DOWNLOAD ERROR] {msg}", flush=True)
+        st.error(msg)
         return False
 
     size_bytes = os.path.getsize(dest_path)
+    size_mb = size_bytes / (1024 * 1024)
+    print(f"[MODEL DOWNLOAD] Selesai. Ukuran file lokal: {size_mb:.2f} MB ({size_bytes} bytes)", flush=True)
+
     if size_bytes < 1024 * 1024:
-        st.error(
-            f"Ukuran file model terlalu kecil ({size_bytes} bytes), kemungkinan file tidak terunduh penuh."
+        with open(dest_path, "rb") as f:
+            preview = f.read(300).decode("utf-8", errors="replace")
+        err_msg = (
+            f"Ukuran file model terlalu kecil ({size_bytes} bytes), kemungkinan bukan file `.keras` yang valid."
         )
+        print(f"[MODEL DOWNLOAD ERROR] {err_msg} | Preview: {preview}", flush=True)
+        status_placeholder.error(err_msg)
+        st.code(preview, language="text")
         return False
 
+    status_placeholder.success(f"Model berhasil diunduh ({size_mb:.2f} MB).")
     return True
 
 
@@ -97,6 +153,11 @@ def load_fundus_model():
             downloaded = download_model_from_release(MODEL_PATH, MODEL_RELEASE_URL)
             if not downloaded:
                 return None
+
+    # Guard tambahan agar load_model() tidak dipanggil jika file tetap tidak ada atau korup/terpotong
+    if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 1024 * 1024:
+        st.error(f"File model `{MODEL_PATH}` tidak tersedia atau tidak lengkap di disk.")
+        return None
 
     try:
         return tf.keras.models.load_model(MODEL_PATH, compile=False)

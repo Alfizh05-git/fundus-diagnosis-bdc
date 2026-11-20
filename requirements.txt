@@ -3,9 +3,4 @@ tensorflow
 numpy
 opencv-python-headless
 pillow
-<<<<<<< HEAD
 requests
-=======
-gdown
-requests
->>>>>>> b04ea1eefa988d72290d73a2284814cc32ccf8cb

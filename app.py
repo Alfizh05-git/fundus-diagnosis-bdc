@@ -4,18 +4,19 @@ import time
 from datetime import datetime
 
 import cv2
-import gdown
 import numpy as np
+import requests
 import streamlit as st
 import tensorflow as tf
 from PIL import Image, ImageDraw
 
 # ==========================================
-# KONFIGURASI SESUAI TRAINING & GOOGLE DRIVE
+# KONFIGURASI SESUAI TRAINING & GITHUB RELEASES
 # ==========================================
 MODEL_PATH = "best_resnet50_model.keras"
-# Ganti nilai di bawah ini dengan File ID dari link Google Drive model Anda
-GDRIVE_FILE_ID = "1iCQKTWiLEcCHtKpvRgl1UB7RJyNMRPjH"
+MODEL_RELEASE_URL = (
+    "https://github.com/Alfizh05-git/fundus-diagnosis-bdc/releases/download/DL-Model/best_resnet50_model.keras"
+)
 
 # Samakan dengan IMG_SIZE = (height, width) pada script training Anda
 IMG_SIZE = (224, 224)
@@ -53,24 +54,36 @@ def pil_to_png_bytes(img_pil: Image.Image) -> bytes:
     return buf.getvalue()
 
 
-def download_model_from_gdrive(dest_path: str, file_id: str) -> bool:
-    """Mengunduh file model dari Google Drive menggunakan gdown."""
-    clean_id = (file_id or "").strip()
-    if not clean_id or "MASUKKAN_FILE_ID" in clean_id:
-        st.error("`GDRIVE_FILE_ID` belum diisi pada kode `app.py`.")
+def download_model_from_release(dest_path: str, release_url: str) -> bool:
+    """Mengunduh file model langsung dari aset GitHub Releases."""
+    clean_url = (release_url or "").strip()
+    if not clean_url:
+        st.error("`MODEL_RELEASE_URL` kosong pada kode `app.py`.")
         return False
 
-    url = f"https://drive.google.com/uc?id={clean_id}"
     try:
-        output = gdown.download(url, dest_path, quiet=False, fuzzy=True)
-        return (
-            output is not None
-            and os.path.exists(dest_path)
-            and os.path.getsize(dest_path) > 1024 * 1024
-        )
+        with requests.get(clean_url, stream=True, timeout=300) as resp:
+            resp.raise_for_status()
+            with open(dest_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
     except Exception as exc:
-        st.error(f"Gagal mengunduh model dari Google Drive: {exc}")
+        st.error(f"Gagal mengunduh model dari GitHub Releases: {exc}")
         return False
+
+    if not os.path.exists(dest_path):
+        st.error("File model tidak ditemukan setelah proses unduh.")
+        return False
+
+    size_bytes = os.path.getsize(dest_path)
+    if size_bytes < 1024 * 1024:
+        st.error(
+            f"Ukuran file model terlalu kecil ({size_bytes} bytes), kemungkinan file tidak terunduh penuh."
+        )
+        return False
+
+    return True
 
 
 @st.cache_resource
@@ -80,8 +93,8 @@ def load_fundus_model():
         or os.path.getsize(MODEL_PATH) < 1024 * 1024
     )
     if need_download:
-        with st.spinner("Mengunduh model dari Google Drive, mohon tunggu..."):
-            downloaded = download_model_from_gdrive(MODEL_PATH, GDRIVE_FILE_ID)
+        with st.spinner("Mengunduh model dari GitHub Releases, mohon tunggu..."):
+            downloaded = download_model_from_release(MODEL_PATH, MODEL_RELEASE_URL)
             if not downloaded:
                 return None
 
@@ -280,7 +293,7 @@ def main_app():
         model = load_fundus_model()
         if model is None:
             st.error(
-                "Model belum dapat dimuat. Periksa kembali `GDRIVE_FILE_ID` serta izin akses file di Google Drive."
+                "Model belum dapat dimuat. Periksa kembali link release di GitHub Releases serta log aplikasi."
             )
             return
 

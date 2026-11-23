@@ -302,7 +302,7 @@ def login_page():
     _, col_mid, _ = st.columns([1, 1.4, 1])
     with col_mid:
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st.title("👁️ Portal Diagnosis Fundus")
+        st.title("Portal Diagnosis Fundus")
         st.caption("Silakan masuk menggunakan akun dokter")
 
         with st.form("login_form"):

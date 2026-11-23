@@ -27,7 +27,7 @@ CLASS_NAMES = ["Normal", "Atrofi Total", "Atrofi Parsial"]
 
 st.set_page_config(
     page_title="Sistem Diagnosis Fundus - Dr. Sita",
-    #page_icon="👁️",
+    page_icon="",
     layout="wide",
 )
 

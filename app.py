@@ -21,7 +21,7 @@ MODEL_RELEASE_URL = (
 )
 
 # Samakan dengan IMG_SIZE = (height, width) pada script training Anda
-IMG_SIZE = (224, 224)
+IMG_SIZE = (300, 300) 
 # Samakan urutan indeks 0, 1, 2 dengan CLASS_TO_IDX / IDX_TO_CLASS saat training
 CLASS_NAMES = ["Normal", "Atrofi Total", "Atrofi Parsial"]
 

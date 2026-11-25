@@ -17,7 +17,7 @@ import tempfile
 
 MODEL_PATH = os.path.join(tempfile.gettempdir(), "best_resnet50_model.h5")
 MODEL_RELEASE_URL = (
-    "https://github.com/Alfizh05-git/fundus-diagnosis-bdc/releases/download/DL-Model/best_resnet50_model.keras"
+    "https://github.com/Alfizh05-git/fundus-diagnosis-bdc/releases/download/DL-Model/best_resnet50_model.h5"
 )
 
 # Samakan dengan IMG_SIZE = (height, width) pada script training Anda

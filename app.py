@@ -217,67 +217,47 @@ def _find_last_conv_layer_recursive(layer):
 
 
 def make_gradcam_heatmap(img_array: np.ndarray, model: tf.keras.Model, pred_index: int) -> np.ndarray:
-    """Menghasilkan heatmap Grad-CAM dari conv5_block3_out ResNet50 secara akurat."""
+    """Menghasilkan heatmap Grad-CAM identik dengan fungsi compute_gradcam di notebook training."""
     backbone = None
     for layer in model.layers:
-        if isinstance(layer, tf.keras.Model) and "resnet" in layer.name.lower():
+        if "resnet50" in layer.name.lower() or "backbone" in layer.name.lower():
             backbone = layer
             break
 
     if backbone is None:
-        st.warning("Sub-model backbone ResNet50 tidak ditemukan pada arsitektur model.")
-        return np.zeros((10, 10), dtype=np.float32)
+        backbone = model
 
-    # Ambil output blok konvolusi terakhir ResNet50 (conv5_block3_out)
     try:
-        target_layer = backbone.get_layer("conv5_block3_out")
+        conv_layer = backbone.get_layer("conv5_block3_out")
     except Exception:
-        target_layer = _find_last_conv_layer_recursive(backbone)
+        conv_layer = _find_last_conv_layer_recursive(backbone)
 
-    if target_layer is None:
+    if conv_layer is None:
         return np.zeros((10, 10), dtype=np.float32)
 
-    # Sub-model dari input ResNet50 menuju [conv5_block3_out, output akhir ResNet50]
-    backbone_grad_model = tf.keras.Model(
-        inputs=backbone.input,
-        outputs=[target_layer.output, backbone.output],
+    grad_model = tf.keras.models.Model(
+        inputs=[backbone.inputs],
+        outputs=[conv_layer.output, backbone.output],
     )
 
-    # Kumpulkan layer classifier head setelah backbone (GAP -> BN -> Dense -> Dropout -> Dense)
-    post_layers = []
-    found_backbone = False
-    for layer in model.layers:
-        if found_backbone:
-            post_layers.append(layer)
-        elif layer is backbone:
-            found_backbone = True
+    x_preprocessed = tf.keras.applications.resnet50.preprocess_input(img_array.copy())
 
     with tf.GradientTape() as tape:
-        # Preprocessing ResNet50 eksplisit (identik dengan build_model & compute_gradcam di notebook)
-        x = tf.keras.applications.resnet50.preprocess_input(tf.cast(img_array, tf.float32))
-        conv_outputs, y = backbone_grad_model(x, training=False)
-        tape.watch(conv_outputs)
+        conv_outputs, predictions = grad_model(x_preprocessed, training=False)
+        loss = predictions[:, pred_index]
 
-        for layer in post_layers:
-            y = layer(y, training=False)
-
-        class_channel = y[:, pred_index]
-
-    grads = tape.gradient(class_channel, conv_outputs)
+    grads = tape.gradient(loss, conv_outputs)
     if grads is None:
         return np.zeros((10, 10), dtype=np.float32)
 
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    conv_map = conv_outputs[0]
-    heatmap = conv_map @ pooled_grads[..., tf.newaxis]
+    conv_outputs = conv_outputs[0]
+    heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
 
-    heatmap = tf.maximum(heatmap, 0)
-    max_val = tf.reduce_max(heatmap)
-    if max_val > 0:
-        heatmap = heatmap / max_val
+    heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-10)
     return heatmap.numpy().astype(np.float32)
-
+    
 def overlay_gradcam(img_pil: Image.Image, heatmap: np.ndarray, alpha: float = 0.4) -> Image.Image:
     """Menggabungkan heatmap Grad-CAM dengan gambar fundus asli."""
     img = np.array(img_pil.convert("RGB"))

@@ -1,6 +1,9 @@
+import base64
 import io
 import os
+import tempfile
 import time
+import traceback
 from datetime import datetime
 
 import cv2
@@ -13,15 +16,13 @@ from PIL import Image, ImageDraw
 # ==========================================
 # KONFIGURASI SESUAI TRAINING & GITHUB RELEASES
 # ==========================================
-import tempfile
-
 MODEL_PATH = os.path.join(tempfile.gettempdir(), "best_resnet50_model.h5")
 MODEL_RELEASE_URL = (
     "https://github.com/Alfizh05-git/fundus-diagnosis-bdc/releases/download/DL-Model/best_resnet50_model.h5"
 )
 
 # Samakan dengan IMG_SIZE = (height, width) pada script training Anda
-IMG_SIZE = (300, 300) 
+IMG_SIZE = (300, 300)
 # Samakan urutan indeks 0, 1, 2 dengan CLASS_TO_IDX / IDX_TO_CLASS saat training
 CLASS_NAMES = ["Normal", "Atrofi Total", "Atrofi Parsial"]
 
@@ -56,7 +57,37 @@ def pil_to_png_bytes(img_pil: Image.Image) -> bytes:
     return buf.getvalue()
 
 
-import traceback
+def render_bytes_image(png_bytes: bytes, caption: str = "", width: int | None = None):
+    """Menampilkan gambar PNG bytes via Base64 agar kebal terhadap error /media ASGI di Streamlit Cloud."""
+    b64_str = base64.b64encode(png_bytes).decode("utf-8")
+    style_width = f"width:{width}px; max-width:100%;" if width else "width:100%;"
+    caption_html = (
+        f"<p style='text-align:center; color:#9ca3af; font-size:0.85rem; margin-top:4px;'>{caption}</p>"
+        if caption
+        else ""
+    )
+    st.markdown(
+        f"""
+        <div style="text-align:center;">
+            <img src="data:image/png;base64,{b64_str}" style="{style_width} border-radius:8px;" />
+            {caption_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_pil_image(img_pil: Image.Image, caption: str = "", width: int | None = None):
+    """Menampilkan PIL Image via Base64."""
+    render_bytes_image(pil_to_png_bytes(img_pil), caption=caption, width=width)
+
+
+def is_valid_hdf5(filepath: str) -> bool:
+    """Memastikan file ada, ukurannya > 1 MB, dan memiliki header HDF5 asli."""
+    if not os.path.exists(filepath) or os.path.getsize(filepath) < 1024 * 1024:
+        return False
+    with open(filepath, "rb") as f:
+        return f.read(8) == b"\x89HDF\r\n\x1a\n"
 
 
 def download_model_from_release(dest_path: str, release_url: str) -> bool:
@@ -86,7 +117,7 @@ def download_model_from_release(dest_path: str, release_url: str) -> bool:
                 body_preview = resp.text[:300] if resp.text else ""
                 err_msg = (
                     f"Gagal mengunduh model (HTTP {resp.status_code}). "
-                    f"Pastikan release & aset `best_resnet50_model.keras` tersedia publik."
+                    f"Pastikan release & aset `best_resnet50_model.h5` tersedia publik."
                 )
                 print(f"[MODEL DOWNLOAD ERROR] {err_msg} | Preview: {body_preview}", flush=True)
                 status_placeholder.error(err_msg)
@@ -129,11 +160,11 @@ def download_model_from_release(dest_path: str, release_url: str) -> bool:
     size_mb = size_bytes / (1024 * 1024)
     print(f"[MODEL DOWNLOAD] Selesai. Ukuran file lokal: {size_mb:.2f} MB ({size_bytes} bytes)", flush=True)
 
-    if size_bytes < 1024 * 1024:
+    if not is_valid_hdf5(dest_path):
         with open(dest_path, "rb") as f:
             preview = f.read(300).decode("utf-8", errors="replace")
         err_msg = (
-            f"Ukuran file model terlalu kecil ({size_bytes} bytes), kemungkinan bukan file `.keras` yang valid."
+            f"File model yang diunduh ({size_mb:.2f} MB) tidak memiliki header HDF5 (.h5) yang valid."
         )
         print(f"[MODEL DOWNLOAD ERROR] {err_msg} | Preview: {preview}", flush=True)
         status_placeholder.error(err_msg)
@@ -146,23 +177,21 @@ def download_model_from_release(dest_path: str, release_url: str) -> bool:
 
 @st.cache_resource
 def load_fundus_model():
-    need_download = (
-        not os.path.exists(MODEL_PATH)
-        or os.path.getsize(MODEL_PATH) < 1024 * 1024
-    )
-    if need_download:
+    if not is_valid_hdf5(MODEL_PATH):
+        if os.path.exists(MODEL_PATH):
+            os.remove(MODEL_PATH)
         with st.spinner("Mengunduh model dari GitHub Releases, mohon tunggu..."):
             downloaded = download_model_from_release(MODEL_PATH, MODEL_RELEASE_URL)
-            if not downloaded:
+            if not downloaded or not is_valid_hdf5(MODEL_PATH):
+                st.error(f"File model `{MODEL_PATH}` tidak tersedia atau tidak valid di disk.")
                 return None
 
-    # Guard tambahan agar load_model() tidak dipanggil jika file tetap tidak ada atau korup/terpotong
-    if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 1024 * 1024:
-        st.error(f"File model `{MODEL_PATH}` tidak tersedia atau tidak lengkap di disk.")
-        return None
-
     try:
-        return tf.keras.models.load_model(MODEL_PATH, compile=False)
+        model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+        # Pemanasan graph komputasi sebelum prediksi & Grad-CAM
+        dummy = np.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=np.float32)
+        _ = model(dummy, training=False)
+        return model
     except Exception as exc:
         st.error(f"Gagal memuat model `{MODEL_PATH}`: {exc}")
         return None
@@ -188,7 +217,7 @@ def _find_last_conv_layer_recursive(layer):
 
 
 def make_gradcam_heatmap(img_array: np.ndarray, model: tf.keras.Model, pred_index: int) -> np.ndarray:
-    """Menghasilkan heatmap Grad-CAM dengan menelusuri sub-model ResNet50 secara aman."""
+    """Menghasilkan heatmap Grad-CAM dengan menjaga skip-connection ResNet50 tetap utuh."""
     try:
         backbone = None
         for layer in model.layers:
@@ -199,61 +228,42 @@ def make_gradcam_heatmap(img_array: np.ndarray, model: tf.keras.Model, pred_inde
         if backbone is not None:
             last_conv = _find_last_conv_layer_recursive(backbone)
             if last_conv is None:
-                return np.zeros((7, 7), dtype=np.float32)
+                return np.zeros((10, 10), dtype=np.float32)
 
-            conv_extractor = tf.keras.Model(
+            backbone_grad_model = tf.keras.Model(
                 inputs=backbone.input,
-                outputs=last_conv.output,
+                outputs=[last_conv.output, backbone.output],
             )
 
-            post_layers = []
+            pre_layers, post_layers = [], []
             found_backbone = False
             for layer in model.layers:
-                if found_backbone:
-                    post_layers.append(layer)
-                elif layer is backbone:
-                    found_backbone = True
-
-            pre_layers = []
-            for layer in model.layers:
                 if layer is backbone:
-                    break
-                if not isinstance(layer, tf.keras.layers.InputLayer):
+                    found_backbone = True
+                    continue
+                if isinstance(layer, tf.keras.layers.InputLayer):
+                    continue
+                if not found_backbone:
                     pre_layers.append(layer)
+                else:
+                    post_layers.append(layer)
 
             with tf.GradientTape() as tape:
                 x = tf.cast(img_array, tf.float32)
                 for layer in pre_layers:
                     x = layer(x, training=False)
-                conv_outputs = conv_extractor(x, training=False)
+
+                conv_outputs, y = backbone_grad_model(x, training=False)
                 tape.watch(conv_outputs)
 
-                backbone_out = conv_outputs
-                passed_conv = False
-                for sub_layer in backbone.layers:
-                    if passed_conv:
-                        backbone_out = sub_layer(backbone_out, training=False)
-                    elif sub_layer is last_conv:
-                        passed_conv = True
-
-                y = backbone_out
                 for layer in post_layers:
                     y = layer(y, training=False)
 
                 class_channel = y[:, pred_index]
-
-            grads = tape.gradient(class_channel, conv_outputs)
-            if grads is None:
-                return np.zeros((7, 7), dtype=np.float32)
-
-            pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-            conv_map = conv_outputs[0]
-            heatmap = conv_map @ pooled_grads[..., tf.newaxis]
-            heatmap = tf.squeeze(heatmap)
         else:
             last_conv = _find_last_conv_layer_recursive(model)
             if last_conv is None:
-                return np.zeros((7, 7), dtype=np.float32)
+                return np.zeros((10, 10), dtype=np.float32)
 
             grad_model = tf.keras.Model(
                 inputs=model.inputs,
@@ -264,14 +274,14 @@ def make_gradcam_heatmap(img_array: np.ndarray, model: tf.keras.Model, pred_inde
                 tape.watch(conv_outputs)
                 class_channel = predictions[:, pred_index]
 
-            grads = tape.gradient(class_channel, conv_outputs)
-            if grads is None:
-                return np.zeros((7, 7), dtype=np.float32)
+        grads = tape.gradient(class_channel, conv_outputs)
+        if grads is None:
+            return np.zeros((10, 10), dtype=np.float32)
 
-            pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-            conv_map = conv_outputs[0]
-            heatmap = conv_map @ pooled_grads[..., tf.newaxis]
-            heatmap = tf.squeeze(heatmap)
+        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+        conv_map = conv_outputs[0]
+        heatmap = conv_map @ pooled_grads[..., tf.newaxis]
+        heatmap = tf.squeeze(heatmap)
 
         heatmap = tf.maximum(heatmap, 0)
         max_val = tf.reduce_max(heatmap)
@@ -280,7 +290,7 @@ def make_gradcam_heatmap(img_array: np.ndarray, model: tf.keras.Model, pred_inde
         return heatmap.numpy().astype(np.float32)
 
     except Exception:
-        return np.zeros((7, 7), dtype=np.float32)
+        return np.zeros((10, 10), dtype=np.float32)
 
 
 def overlay_gradcam(img_pil: Image.Image, heatmap: np.ndarray, alpha: float = 0.4) -> Image.Image:
@@ -342,7 +352,7 @@ def main_app():
         st.divider()
         col1, col2 = st.columns([1, 2.5])
         with col1:
-            st.image(get_doctor_avatar(), width=200)
+            render_pil_image(get_doctor_avatar(), width=200)
         with col2:
             st.subheader("dr. Sita")
             st.write("**Username:** `drsita`")
@@ -368,7 +378,7 @@ def main_app():
 
         if uploaded_file is not None:
             pil_image = Image.open(uploaded_file).convert("RGB")
-            st.image(pil_image, caption="Preview Foto Fundus", width=260)
+            render_pil_image(pil_image, caption="Preview Foto Fundus", width=260)
 
             if st.button("diagnosis foto", type="primary"):
                 with st.spinner("gambar anda sedang dianalisis"):
@@ -398,9 +408,9 @@ def main_app():
 
                 img_col1, img_col2 = st.columns(2)
                 with img_col1:
-                    st.image(pil_image, caption="Gambar Fundus Asli", use_container_width=True)
+                    render_pil_image(pil_image, caption="Gambar Fundus Asli")
                 with img_col2:
-                    st.image(gradcam_image, caption="Grad-CAM Heatmap", use_container_width=True)
+                    render_pil_image(gradcam_image, caption="Grad-CAM Heatmap")
 
                 st.session_state.history.append({
                     "waktu": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -428,9 +438,9 @@ def main_app():
                 with st.expander(title):
                     c1, c2 = st.columns(2)
                     with c1:
-                        st.image(item["asli_bytes"], caption=f"Asli ({item['file']})", use_container_width=True)
+                        render_bytes_image(item["asli_bytes"], caption=f"Asli ({item['file']})")
                     with c2:
-                        st.image(item["gradcam_bytes"], caption="Grad-CAM Heatmap", use_container_width=True)
+                        render_bytes_image(item["gradcam_bytes"], caption="Grad-CAM Heatmap")
 
 
 if st.session_state.logged_in:

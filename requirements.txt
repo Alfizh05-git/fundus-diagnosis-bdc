@@ -6,3 +6,4 @@ pillow
 requests
 shap
 scikit-learn
+imbalanced-learn

@@ -430,15 +430,15 @@ def run_clinical_scoring(
     class_order = list(getattr(rf_pipeline, "classes_", [0, 1, 2]))
 
     # Transformasi fitur jika pipeline memiliki preprocessor sebelum classifier
-    if hasattr(rf_pipeline, "named_steps") and len(rf_pipeline.named_steps) > 1:
-        preprocessor = rf_pipeline[:-1]
-        X_for_shap = preprocessor.transform(patient_data)
-    else:
-        X_for_shap = patient_data
+    X_for_shap = patient_data.copy()
+    if hasattr(rf_pipeline, "steps") and len(rf_pipeline.steps) > 1:
+        for step_name, step_obj in rf_pipeline.steps[:-1]:
+            if hasattr(step_obj, "transform"):
+                X_for_shap = step_obj.transform(X_for_shap)
 
     shap_values = compute_clinical_shap_values(explainer, X_for_shap, len(class_order))[0]
     expected_values = np.asarray(explainer.expected_value).reshape(-1)
-
+    
     class_tables = {}
     for idx, class_id in enumerate(class_order):
         label = CLASS_NAMES[int(class_id)]

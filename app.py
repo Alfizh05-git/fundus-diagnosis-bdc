@@ -485,7 +485,7 @@ def login_page():
     _, col_mid, _ = st.columns([1, 1.4, 1])
     with col_mid:
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st.title("Portal Diagnosis Atrofi Papil")
+        st.title("Welcome to OptiDisc")
         st.caption("Silakan masuk menggunakan akun dokter")
 
         with st.form("login_form"):
@@ -527,7 +527,7 @@ def clinical_diagnosis_page():
         st.subheader("A. Informasi Pasien")
         col_a1, col_a2, col_a3 = st.columns(3)
         with col_a1:
-            patient_id = st.text_input("ID / Nama Pasien (Opsional)", placeholder="Contoh: Pasien-01")
+            patient_id = st.text_input("Nomor Pasien", placeholder="Contoh: Pasien-01")
         with col_a2:
             usia_tahun = st.number_input("Usia (tahun)", min_value=1, max_value=120, value=30, step=1)
         with col_a3:
@@ -783,7 +783,7 @@ def main_app():
 
         col_in1, col_in2 = st.columns(2)
         with col_in1:
-            patient_id = st.text_input("ID / Nama Pasien (Opsional)", placeholder="Contoh: Pasien-01")
+            patient_id = st.text_input("Nomor Pasien ", placeholder="Contoh: Pasien-01")
         with col_in2:
             uploaded_file = st.file_uploader("Upload Foto Fundus", type=["jpg", "jpeg", "png"])
 

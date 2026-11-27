@@ -32,7 +32,7 @@ CLASS_NAMES = ["Normal", "Atrofi Total", "Atrofi Parsial"]
 # Sesuaikan path lokal atau URL GitHub Releases untuk model .pkl Anda
 RF_LOCAL_MODEL_PATH = os.path.join("RandomForest_Scoring_System", "RandomForest_Final_Model.pkl")
 RF_TEMP_MODEL_PATH = os.path.join(tempfile.gettempdir(), "RandomForest_Final_Model.pkl")
-#RF_MODEL_RELEASE_URL = ""  # Isi URL GitHub Releases jika file .pkl tidak di-commit ke repo
+RF_MODEL_RELEASE_URL = "https://github.com/Alfizh05-git/fundus-diagnosis-bdc/releases/download/ML-model/RandomForest_Final_Model.pkl"  # Isi URL GitHub Releases jika file .pkl tidak di-commit ke repo
 
 RF_EXPLAINER_PATH = os.path.join("RandomForest_Scoring_System", "RandomForest_SHAP_Explainer.pkl")
 RF_WEIGHT_CSV_PATH = os.path.join("RandomForest_Scoring_System", "RandomForest_Score_Weight.csv")

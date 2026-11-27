@@ -357,12 +357,12 @@ def overlay_gradcam(img_pil: Image.Image, heatmap: np.ndarray, alpha: float = 0.
 # ==========================================
 @st.cache_resource
 def load_clinical_scoring_assets():
-    """Memuat RandomForest_Final_Model.pkl beserta SHAP Explainer dan Score Weights."""
+    """Memuat RandomForest_Final_Model.pkl dan membuat SHAP TreeExplainer langsung di server."""
     model_file = None
-    if os.path.exists(RF_LOCAL_MODEL_PATH):
-        model_file = RF_LOCAL_MODEL_PATH
-    elif os.path.exists("RandomForest_Final_Model.pkl"):
+    if os.path.exists("RandomForest_Final_Model.pkl"):
         model_file = "RandomForest_Final_Model.pkl"
+    elif os.path.exists(RF_LOCAL_MODEL_PATH):
+        model_file = RF_LOCAL_MODEL_PATH
     elif os.path.exists(RF_TEMP_MODEL_PATH):
         model_file = RF_TEMP_MODEL_PATH
     elif RF_MODEL_RELEASE_URL.strip():
@@ -376,20 +376,15 @@ def load_clinical_scoring_assets():
         with open(model_file, "rb") as f:
             rf_pipeline = pickle.load(f)
 
-        # Muat atau bangun SHAP TreeExplainer
-        explainer = None
-        if os.path.exists(RF_EXPLAINER_PATH):
-            with open(RF_EXPLAINER_PATH, "rb") as f:
-                explainer = pickle.load(f)
+        # JANGAN load RandomForest_SHAP_Explainer.pkl (penyebab error bytecode Python).
+        # Bangun ulang TreeExplainer langsung dari estimator RandomForest:
+        if hasattr(rf_pipeline, "named_steps"):
+            rf_estimator = list(rf_pipeline.named_steps.values())[-1]
         else:
-            # Ekstrak estimator RandomForest jika dibungkus sklearn Pipeline
-            if hasattr(rf_pipeline, "named_steps"):
-                rf_estimator = list(rf_pipeline.named_steps.values())[-1]
-            else:
-                rf_estimator = rf_pipeline
-            explainer = shap.TreeExplainer(rf_estimator)
+            rf_estimator = rf_pipeline
 
-        # Muat Score Weight CSV jika ada, jika tidak gunakan default
+        explainer = shap.TreeExplainer(rf_estimator)
+
         weight_lookup = DEFAULT_SCORE_WEIGHTS.copy()
         if os.path.exists(RF_WEIGHT_CSV_PATH):
             df_w = pd.read_csv(RF_WEIGHT_CSV_PATH)
@@ -399,8 +394,8 @@ def load_clinical_scoring_assets():
         return rf_pipeline, explainer, weight_lookup
     except Exception as exc:
         st.error(f"Gagal memuat aset model parameter klinis: {exc}")
+        st.code(traceback.format_exc(), language="text")
         return None, None, None
-
 
 def compute_clinical_shap_values(explainer, transformed_df: pd.DataFrame, n_classes: int) -> np.ndarray:
     """Menormalisasi output SHAP menjadi array (1, n_features, n_classes)."""

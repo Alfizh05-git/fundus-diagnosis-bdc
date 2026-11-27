@@ -4,6 +4,6 @@ streamlit
 opencv-python-headless
 pillow
 requests
-shap
+shap==0.49.1
 scikit-learn==1.5.1
 imbalanced-learn==0.12.3

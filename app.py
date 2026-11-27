@@ -639,8 +639,8 @@ def clinical_diagnosis_page():
         card_cols = st.columns(3)
         card_meta = [
             ("Normal", "Normal", "Class 1"),
-            ("Atrofi Parsial", "Partial", "Class 2"),
-            ("Atrofi Total", "Total", "Class 3"),
+            ("Atrofi Total", "Total", "Class 2"),
+            ("Atrofi Parsial", "Partial", "Class 3"),
         ]
         for col, (internal_name, title_en, sub_cls) in zip(card_cols, card_meta):
             is_active = pred_label == internal_name
@@ -664,8 +664,8 @@ def clinical_diagnosis_page():
         }
         prob_display_order = [
             ("Normal optic disc", "Normal"),
-            ("Partial optic disc atrophy", "Atrofi Parsial"),
             ("Total optic disc atrophy", "Atrofi Total"),
+            ("Partial optic disc atrophy", "Atrofi Parsial"),
         ]
         for label_en, key_id in prob_display_order:
             pct = prob_lookup.get(key_id, 0.0)
